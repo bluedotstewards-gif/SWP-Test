@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MB Water Quality Monitoring — Citizen Science</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #ffffff;
+      color: #1d3557;
+      padding: 32px 28px;
+      max-width: 100%;
+      margin: 0 auto;
+    }
+    h1 { font-size: 26px; margin-bottom: 4px; }
+    .subtitle { font-size: 14px; color: #6b7280; margin-bottom: 8px; }
+    .note {
+      font-size: 12px; color: #9ca3af; margin-bottom: 22px;
+      background: #f9fafb; padding: 8px 12px; border-radius: 6px; border-left: 3px solid #d1d5db;
+    }
+    .status-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 12px; color: #9ca3af; margin-bottom: 16px;
+    }
+    .status-bar .dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px;
+    }
+    .dot.live { background: #22c55e; }
+    .dot.offline { background: #f59e0b; }
+    .dot.error { background: #ef4444; }
+    .status-bar button {
+      font-size: 12px; font-family: inherit; background: #f9fafb;
+      border: 1px solid #d1d5db; border-radius: 5px; padding: 3px 10px;
+      cursor: pointer; color: #6b7280;
+    }
+    .status-bar button:hover { background: #f0f0f0; }
+    .toggle-group { margin-bottom: 14px; }
+    .toggle-group-label {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.6px; color: #9ca3af; margin-bottom: 7px;
+    }
+    .toggle-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .toggle-btn {
+      display: flex; align-items: center; gap: 7px; padding: 6px 14px;
+      border-radius: 8px; border: 1.5px solid #d1d5db; background: #f9fafb;
+      cursor: pointer; font-size: 13px; font-family: inherit;
+      transition: all 0.2s; line-height: 1.3;
+    }
+    .toggle-btn.active { font-weight: 500; }
+    .toggle-btn .swatch { width: 16px; height: 4px; border-radius: 2px; flex-shrink: 0; }
+    .toggle-btn .range { font-size: 10px; color: #9ca3af; margin-left: 2px; }
+    .chart-wrap { position: relative; width: 100%; height: 750px; margin-top: 18px; }
+    .active-ranges {
+      display: flex; gap: 18px; justify-content: center; flex-wrap: wrap;
+      margin-top: 14px; padding: 10px 16px; background: #f9fafb; border-radius: 8px;
+    }
+    .active-ranges .item { font-size: 12px; display: flex; align-items: center; gap: 5px; }
+    .active-ranges .rdot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+    .active-ranges .vals { color: #6b7280; }
+    .footer { font-size: 12px; color: #9ca3af; text-align: center; margin-top: 18px; }
+  </style>
+</head>
+<body>
+
+  <h1>MB Water Quality Monitoring</h1>
+  <p class="subtitle">Toggle parameters to compare patterns — all series scaled to fill the chart height.</p>
+  <div class="note">
+    Each parameter has its own <strong>color-coded number scale</strong>. Missing values are
+    <strong>linearly interpolated</strong> (smaller, faded dots). Hover for actual values.
+  </div>
+
+  <div class="status-bar">
+    <span id="statusText"><span class="dot offline"></span>Loading...</span>
+    <button onclick="tryLiveFetch()">↻ Refresh</button>
+  </div>
+
+  <div id="toggles"></div>
+
+  <div class="chart-wrap">
+    <canvas id="chart"></canvas>
+  </div>
+
+  <div class="active-ranges" id="activeRanges"></div>
+  <p class="footer">Built with Chart.js (MIT License) — Free & Open Source</p>
+
+<script>
+// ╔═══════════════════════════════════════════════════════════╗
+// ║  EMBEDDED DATA (works offline / from file://)             ║
+// ║  This is auto-replaced by live data when hosted online.   ║
+// ╚═══════════════════════════════════════════════════════════╝
+var EMBEDDED_DATA = [
+  {date:"2024-12-24",pH:7.3,cond:1.01,tds:653,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:470,anRH:60,anTemp:5.9,hRH:61.9,hTemp:3,wTemp:2.6},
+  {date:"2024-12-30",pH:7.4,cond:0.88,tds:533,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:474,anRH:64,anTemp:11.5,hRH:68.8,hTemp:8.5,wTemp:8.1},
+  {date:"2025-01-06",pH:null,cond:null,tds:null,nitrate:null,nitrite:null,phosphate:null,turbidity:null,co2:428,anRH:62,anTemp:-4.6,hRH:51.1,hTemp:-4.5,wTemp:null},
+  {date:"2025-01-14",pH:7,cond:1.03,tds:860,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:455,anRH:66,anTemp:4.4,hRH:45.1,hTemp:-1,wTemp:3},
+  {date:"2025-01-21",pH:7,cond:2.19,tds:1491,nitrate:null,nitrite:null,phosphate:0,turbidity:null,co2:426,anRH:37,anTemp:-4.6,hRH:50.6,hTemp:-8.5,wTemp:0.73},
+  {date:"2025-01-27",pH:7.8,cond:2.33,tds:1844,nitrate:0,nitrite:0,phosphate:0.5,turbidity:null,co2:457,anRH:72,anTemp:1.6,hRH:64.6,hTemp:-0.9,wTemp:4.12},
+  {date:"2025-02-05",pH:7.5,cond:3.34,tds:1899,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:478,anRH:56,anTemp:3.8,hRH:62.1,hTemp:0.668,wTemp:0.34},
+  {date:"2025-02-11",pH:7.4,cond:4,tds:1999,nitrate:2,nitrite:0,phosphate:0.5,turbidity:null,co2:472,anRH:47,anTemp:4.5,hRH:58.9,hTemp:0,wTemp:3.3},
+  {date:"2025-02-25",pH:7,cond:1.93,tds:1269,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:468,anRH:64,anTemp:6.2,hRH:67.9,hTemp:4.9,wTemp:0.13},
+  {date:"2025-03-04",pH:7.3,cond:2.11,tds:1457,nitrate:null,nitrite:null,phosphate:0.25,turbidity:null,co2:490,anRH:46,anTemp:8.2,hRH:46.2,hTemp:7.15,wTemp:0.62},
+  {date:"2025-03-10",pH:7.1,cond:0.55,tds:325,nitrate:null,nitrite:null,phosphate:1,turbidity:null,co2:497,anRH:41,anTemp:19,hRH:36.7,hTemp:15.24,wTemp:7.62},
+  {date:"2025-03-19",pH:8.3,cond:1.74,tds:1138,nitrate:2,nitrite:0,phosphate:0,turbidity:null,co2:485,anRH:32,anTemp:26.3,hRH:26,hTemp:25.9,wTemp:null},
+  {date:"2025-03-25",pH:8.6,cond:1.86,tds:1236,nitrate:1,nitrite:0,phosphate:0,turbidity:null,co2:462,anRH:43,anTemp:9,hRH:47,hTemp:6.82,wTemp:null},
+  {date:"2025-04-01",pH:8.4,cond:1.3,tds:813,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:481,anRH:20,anTemp:15.9,hRH:18,hTemp:16.96,wTemp:8.6},
+  {date:"2025-04-09",pH:8.5,cond:0.86,tds:523,nitrate:1,nitrite:0,phosphate:0.25,turbidity:null,co2:476,anRH:27,anTemp:18.2,hRH:27.4,hTemp:16.29,wTemp:16.29},
+  {date:"2025-04-17",pH:8.8,cond:0.87,tds:530,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:466,anRH:23,anTemp:24.3,hRH:23,hTemp:18.6,wTemp:15.48},
+  {date:"2025-04-23",pH:8.6,cond:0.96,tds:589,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:478,anRH:39,anTemp:16.6,hRH:38,hTemp:16.03,wTemp:null},
+  {date:"2025-04-28",pH:8.5,cond:0.94,tds:577,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:479,anRH:39,anTemp:17.1,hRH:39.5,hTemp:16.2,wTemp:null},
+  {date:"2025-05-06",pH:8.8,cond:0.83,tds:505,nitrate:0,nitrite:0,phosphate:0.5,turbidity:null,co2:466,anRH:53,anTemp:20.2,hRH:53,hTemp:19.6,wTemp:17.93},
+  {date:"2025-05-12",pH:7.8,cond:0.89,tds:541,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:474,anRH:25,anTemp:36.7,hRH:24,hTemp:35.4,wTemp:null},
+  {date:"2025-05-21",pH:8,cond:0.79,tds:482,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:498,anRH:46,anTemp:17.2,hRH:42.2,hTemp:16.51,wTemp:19.39},
+  {date:"2025-05-29",pH:8,cond:0.55,tds:327,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:482,anRH:64,anTemp:21.1,hRH:null,hTemp:null,wTemp:19.86},
+  {date:"2025-06-05",pH:7.6,cond:0.76,tds:455,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:514,anRH:70,anTemp:22,hRH:null,hTemp:null,wTemp:25.36},
+  {date:"2025-06-12",pH:8.5,cond:0.56,tds:331,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:490,anRH:48,anTemp:24.7,hRH:38.43,hTemp:24.68,wTemp:23.34},
+  {date:"2025-06-17",pH:8.4,cond:0.71,tds:427,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:527,anRH:81,anTemp:20.3,hRH:86.9,hTemp:20.67,wTemp:21.13},
+  {date:"2025-06-27",pH:7.7,cond:0.68,tds:403,nitrate:0,nitrite:0,phosphate:0,turbidity:16.3,co2:899,anRH:75,anTemp:18.2,hRH:83.6,hTemp:23.21,wTemp:27.28},
+  {date:"2025-07-04",pH:7.5,cond:0.41,tds:267,nitrate:1,nitrite:0.15,phosphate:0.25,turbidity:15.8,co2:498,anRH:63,anTemp:22.4,hRH:51.4,hTemp:22.9,wTemp:24.79},
+  {date:"2025-07-09",pH:7.7,cond:6.6,tds:353,nitrate:0,nitrite:0,phosphate:0.25,turbidity:15.6,co2:539,anRH:83,anTemp:26.1,hRH:74,hTemp:26.55,wTemp:null},
+  {date:"2025-07-17",pH:7.8,cond:0.58,tds:345,nitrate:null,nitrite:null,phosphate:0,turbidity:18.1,co2:502,anRH:63,anTemp:23.4,hRH:58,hTemp:23.18,wTemp:27.02},
+  {date:"2025-07-24",pH:8.1,cond:0.71,tds:425,nitrate:null,nitrite:null,phosphate:0.25,turbidity:17.9,co2:934,anRH:76,anTemp:28.4,hRH:72.1,hTemp:29.69,wTemp:30.53},
+  {date:"2025-07-30",pH:7.4,cond:0.63,tds:372,nitrate:0,nitrite:0,phosphate:0.25,turbidity:0,co2:453,anRH:63,anTemp:27.5,hRH:50.5,hTemp:27.41,wTemp:27.37},
+  {date:"2025-08-05",pH:8.6,cond:0.61,tds:362,nitrate:0,nitrite:0,phosphate:0.25,turbidity:19,co2:459,anRH:62,anTemp:24.9,hRH:59.3,hTemp:24.1,wTemp:26.04},
+  {date:"2025-08-19",pH:7.8,cond:0.68,tds:408,nitrate:0,nitrite:0,phosphate:0,turbidity:18.6,co2:502,anRH:71,anTemp:27.5,hRH:62.6,hTemp:26.67,wTemp:null},
+  {date:"2025-09-10",pH:7.7,cond:0.5,tds:294,nitrate:1,nitrite:0,phosphate:0.25,turbidity:16.4,co2:457,anRH:61,anTemp:23.3,hRH:null,hTemp:null,wTemp:24.48},
+  {date:"2025-09-15",pH:8.9,cond:0.55,tds:318,nitrate:0,nitrite:0,phosphate:0.5,turbidity:16.1,co2:488,anRH:67,anTemp:19.6,hRH:null,hTemp:null,wTemp:25.57},
+  {date:"2025-10-01",pH:8,cond:0.46,tds:269,nitrate:1,nitrite:0,phosphate:0,turbidity:18.7,co2:478,anRH:70,anTemp:16.1,hRH:null,hTemp:null,wTemp:20.42},
+  {date:"2025-10-07",pH:7.5,cond:0.53,tds:311,nitrate:0,nitrite:0,phosphate:0.25,turbidity:17,co2:478,anRH:89,anTemp:18.9,hRH:null,hTemp:null,wTemp:20.2},
+  {date:"2025-10-28",pH:7.7,cond:0.56,tds:331,nitrate:0,nitrite:0,phosphate:0,turbidity:15.4,co2:476,anRH:63,anTemp:12.6,hRH:null,hTemp:null,wTemp:9.01},
+  {date:"2025-10-28",pH:7.7,cond:0.56,tds:330,nitrate:0,nitrite:0,phosphate:0,turbidity:14.1,co2:476,anRH:63,anTemp:12.6,hRH:null,hTemp:null,wTemp:9.01},
+  {date:"2025-11-19",pH:7.2,cond:0.91,tds:555,nitrate:null,nitrite:null,phosphate:0.25,turbidity:8.19,co2:500,anRH:88,anTemp:7.7,hRH:null,hTemp:null,wTemp:5.92},
+  {date:"2025-11-19",pH:7.3,cond:0.8,tds:481,nitrate:null,nitrite:null,phosphate:0.25,turbidity:1.51,co2:500,anRH:88,anTemp:7.7,hRH:null,hTemp:null,wTemp:5.92},
+  {date:"2025-11-29",pH:7.3,cond:1.01,tds:623,nitrate:null,nitrite:null,phosphate:0.5,turbidity:null,co2:480,anRH:65,anTemp:6.9,hRH:null,hTemp:null,wTemp:null},
+  {date:"2025-11-29",pH:7.6,cond:0.96,tds:586,nitrate:null,nitrite:null,phosphate:0.5,turbidity:null,co2:480,anRH:65,anTemp:6.9,hRH:null,hTemp:null,wTemp:null},
+  {date:"2025-12-09",pH:6.9,cond:1.16,tds:729,nitrate:2,nitrite:0,phosphate:0.25,turbidity:1.78,co2:469,anRH:84,anTemp:-0.9,hRH:null,hTemp:null,wTemp:4.2},
+  {date:"2025-12-09",pH:7.3,cond:1.17,tds:733,nitrate:1,nitrite:0,phosphate:0,turbidity:5.61,co2:469,anRH:84,anTemp:-0.9,hRH:null,hTemp:null,wTemp:4.2},
+  {date:"2026-01-02",pH:7.1,cond:1.29,tds:820,nitrate:2,nitrite:0,phosphate:0,turbidity:3.9,co2:443,anRH:64,anTemp:1.7,hRH:50,hTemp:-1.53,wTemp:1.5},
+  {date:"2026-01-02",pH:6.5,cond:1.37,tds:878,nitrate:2,nitrite:0,phosphate:0,turbidity:4.5,co2:443,anRH:64,anTemp:1.7,hRH:50,hTemp:-1.53,wTemp:1.5}
+];
+
+// ╔═══════════════════════════════════════════════════════════╗
+// ║  GOOGLE SHEET CONFIG (for live updates when hosted)       ║
+// ╚═══════════════════════════════════════════════════════════╝
+var SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTGtkQsc1kvNrbtRSkp6g511BNaT7SaCwqr5akM9N8NrM4E26WjmnRXoJZh4GeSLfcwmJzJ4oIpxs3z/pub?gid=709551290&single=true&output=csv';
+var REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
+// ── SERIES CONFIG ─────────────────────────────────────
+var seriesConfig = [
+  { key:'pH', label:'pH', color:'#e63946', group:'Water Chemistry', unit:'' },
+  { key:'cond', label:'Conductivity (mS/cm)', color:'#457b9d', group:'Water Chemistry', unit:' mS/cm' },
+  { key:'tds', label:'TDS (ppm)', color:'#264653', group:'Water Chemistry', unit:' ppm' },
+  { key:'nitrate', label:'Nitrate', color:'#f4a261', group:'Nutrients', unit:'' },
+  { key:'nitrite', label:'Nitrite', color:'#e76f51', group:'Nutrients', unit:'' },
+  { key:'phosphate', label:'Phosphate', color:'#2a9d8f', group:'Nutrients', unit:'' },
+  { key:'turbidity', label:'Turbidity', color:'#7209b7', group:'Nutrients', unit:'' },
+  { key:'co2', label:'CO₂ (ppm)', color:'#8ac926', group:'Atmospheric', unit:' ppm' },
+  { key:'anRH', label:'AN Humidity (%)', color:'#adb5bd', group:'Atmospheric', unit:'%' },
+  { key:'anTemp', label:'Air Temp – AN (°C)', color:'#ff006e', group:'Temperature', unit:'°C' },
+  { key:'hRH', label:'HBLCD Humidity (%)', color:'#6c757d', group:'Atmospheric', unit:'%' },
+  { key:'hTemp', label:'HBLCD Temp (°C)', color:'#fb8500', group:'Temperature', unit:'°C' },
+  { key:'wTemp', label:'Water Temp (°C)', color:'#0077b6', group:'Temperature', unit:'°C' },
+];
+
+var visibility = {};
+seriesConfig.forEach(function(s) { visibility[s.key] = (s.key === 'pH' || s.key === 'wTemp'); });
+
+var chart = null;
+var parsedData = [];
+var isLive = false;
+
+// ── STATUS ────────────────────────────────────────────
+function setStatus(state, message) {
+  var el = document.getElementById('statusText');
+  el.innerHTML = '<span class="dot ' + state + '"></span>' + message;
+}
+
+// ── PROCESS ROWS ──────────────────────────────────────
+function processRows(rows) {
+  rows.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
+  var dateCounts = {};
+  return rows.map(function(r) {
+    var dateKey = r.date;
+    dateCounts[dateKey] = (dateCounts[dateKey] || 0) + 1;
+    var offset = (dateCounts[dateKey] - 1) * 3600000;
+    return Object.assign({}, r, { timestamp: new Date(dateKey).getTime() + offset });
+  }).filter(function(r) { return !isNaN(r.timestamp); });
+}
+
+// ── CSV PARSER ────────────────────────────────────────
+var HEADER_MAP = {
+  'date':'date','ph':'pH','conductivity mspcm':'cond','tds ppm':'tds',
+  'nitrate':'nitrate','nitrite':'nitrite','phosphate':'phosphate',
+  'turbidity':'turbidity','an co2':'co2','an rh':'anRH','an temp':'anTemp',
+  'hblcd rh':'hRH','hblcd temp':'hTemp','hbp wtemp':'wTemp',
+};
+
+function splitCSV(line) {
+  var r=[],c='',q=false;
+  for(var i=0;i<line.length;i++){var ch=line[i];if(ch==='"')q=!q;else if(ch===','&&!q){r.push(c);c='';}else c+=ch;}
+  r.push(c);return r;
+}
+
+function parseCSV(text) {
+  var lines = text.split('\n');
+  var headerIdx = -1, headers = [];
+  for (var h = 0; h < Math.min(5, lines.length); h++) {
+    var test = splitCSV(lines[h]);
+    var lower = test.map(function(x){return x.trim().toLowerCase();});
+    if (lower.indexOf('date') >= 0 || lower.indexOf('ph') >= 0) {
+      headerIdx = h; headers = test.map(function(x){return x.trim();}); break;
+    }
+  }
+  if (headerIdx === -1) return [];
+
+  var colMap = {};
+  headers.forEach(function(h, i) {
+    var lc = h.toLowerCase().replace(/\s+/g,' ').trim();
+    if (HEADER_MAP[lc]) { colMap[i] = HEADER_MAP[lc]; return; }
+    for (var k in HEADER_MAP) { if (lc.indexOf(k)>=0||k.indexOf(lc)>=0) { colMap[i]=HEADER_MAP[k]; return; } }
+  });
+
+  var rows = [];
+  for (var r = headerIdx+1; r < lines.length; r++) {
+    var line = lines[r].trim(); if (!line) continue;
+    var cells = splitCSV(line); var obj = {}; var has = false;
+    for (var ci in colMap) {
+      var idx=parseInt(ci), key=colMap[ci], val=(idx<cells.length)?cells[idx].trim():'';
+      if (key==='date') { if(val) obj.date=val; }
+      else { var n=parseFloat(val); obj[key]=isNaN(n)?null:n; if(!isNaN(n))has=true; }
+    }
+    if (obj.date && has) rows.push(obj);
+  }
+  return rows;
+}
+
+// ── NORMALIZE & INTERPOLATE ───────────────────────────
+function computeMinMax() {
+  seriesConfig.forEach(function(s) {
+    var vals = parsedData.map(function(d){return d[s.key];}).filter(function(v){return v!==null&&v!==undefined;});
+    if (!vals.length) { s.dataMin=0;s.dataMax=1;s.normMin=-0.05;s.normMax=1.05;return; }
+    s.dataMin=Math.min.apply(null,vals); s.dataMax=Math.max.apply(null,vals);
+    var range=s.dataMax-s.dataMin||1; s.normMin=s.dataMin-range*0.05; s.normMax=s.dataMax+range*0.05;
+  });
+}
+function normalize(v,s){if(v===null||v===undefined)return null;var r=s.normMax-s.normMin;return r===0?50:((v-s.normMin)/r)*100;}
+function interpolate(key) {
+  var vals=parsedData.map(function(d){return{t:d.timestamp,v:d[key]};});
+  var res=vals.map(function(v){return{t:v.t,v:v.v};});
+  for(var i=0;i<res.length;i++){
+    if(res[i].v!==null&&res[i].v!==undefined)continue;
+    var pi=-1,ni=-1;
+    for(var p=i-1;p>=0;p--){if(vals[p].v!==null&&vals[p].v!==undefined){pi=p;break;}}
+    for(var n=i+1;n<vals.length;n++){if(vals[n].v!==null&&vals[n].v!==undefined){ni=n;break;}}
+    if(pi!==-1&&ni!==-1){var tr=vals[ni].t-vals[pi].t;var f=tr===0?0:(vals[i].t-vals[pi].t)/tr;res[i].v=vals[pi].v+f*(vals[ni].v-vals[pi].v);res[i].interpolated=true;}
+  }
+  return res;
+}
+
+function buildDatasets() {
+  return seriesConfig.map(function(s) {
+    var interp = interpolate(s.key);
+    return {
+      label:s.label,
+      data:interp.map(function(d){return{x:d.t,y:normalize(d.v,s),_raw:d.v,_interp:!!d.interpolated};}),
+      borderColor:s.color,backgroundColor:s.color+'22',borderWidth:1.5,
+      pointRadius:interp.map(function(d){return d.interpolated?1:2.5;}),pointHoverRadius:5,
+      pointBackgroundColor:interp.map(function(d){return d.interpolated?s.color+'66':s.color;}),
+      pointBorderColor:interp.map(function(d){return d.interpolated?'transparent':'#fff';}),
+      pointBorderWidth:interp.map(function(d){return d.interpolated?0:1.5;}),
+      tension:0.25,yAxisID:'y_'+s.key,hidden:!visibility[s.key],spanGaps:false,
+    };
+  });
+}
+function buildScales() {
+  var sc={
+    x:{type:'time',time:{unit:'month',tooltipFormat:'MMM d, yyyy',displayFormats:{month:'MMM yyyy'}},grid:{color:'#f0f0f0'},ticks:{font:{size:12},maxRotation:45}},
+    yGrid:{type:'linear',position:'left',min:0,max:100,display:false,grid:{drawOnChartArea:true,color:'#f3f4f6'},ticks:{display:false}},
+  };
+  seriesConfig.forEach(function(s,i){
+    var side=i%2===0?'left':'right';
+    sc['y_'+s.key]={
+      type:'linear',position:side,min:0,max:100,display:visibility[s.key],weight:i+1,
+      grid:{drawOnChartArea:false},afterFit:function(a){a.width=58;},
+      ticks:{font:{size:10},color:s.color,count:6,padding:4,callback:function(val){
+        var r=s.normMax-s.normMin;var a=s.normMin+(val/100)*r;
+        if(Math.abs(a)>=100)return Math.round(a);if(Math.abs(a)>=1)return parseFloat(a.toFixed(1));return parseFloat(a.toFixed(3));
+      }},
+      title:{display:visibility[s.key],text:s.label,font:{size:9,weight:'600'},color:s.color,padding:2},
+    };
+  });
+  return sc;
+}
+
+function renderChart() {
+  computeMinMax();
+  if(chart){chart.data.datasets=buildDatasets();chart.options.scales=buildScales();chart.update();}
+  else{
+    chart=new Chart(document.getElementById('chart').getContext('2d'),{
+      type:'line',data:{datasets:buildDatasets()},
+      options:{responsive:true,maintainAspectRatio:false,layout:{padding:{left:10,right:10,top:10,bottom:10}},
+        interaction:{mode:'nearest',intersect:false,axis:'x'},
+        plugins:{legend:{display:false},tooltip:{
+          backgroundColor:'#fff',titleColor:'#1d3557',bodyColor:'#374151',borderColor:'#e5e7eb',borderWidth:1,
+          cornerRadius:10,padding:14,bodyFont:{size:13},titleFont:{size:13,weight:'600'},
+          displayColors:true,boxWidth:10,boxHeight:10,boxPadding:4,
+          callbacks:{
+            title:function(items){if(!items.length)return'';var d=new Date(items[0].parsed.x);return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});},
+            label:function(ctx){var s=seriesConfig[ctx.datasetIndex];var rv=ctx.raw._raw;var ip=ctx.raw._interp;if(rv===null||rv===undefined)return null;var dsp=typeof rv==='number'?(Number.isInteger(rv)?rv:rv.toFixed(2)):rv;return' '+s.label+': '+dsp+s.unit+(ip?' (interpolated)':'');}
+          }
+        }},
+        scales:buildScales(),
+      },
+    });
+  }
+  buildToggles();updateRangeLegend();
+}
+
+function buildToggles(){
+  var c=document.getElementById('toggles');c.innerHTML='';var groups={};
+  seriesConfig.forEach(function(s,i){if(!groups[s.group])groups[s.group]=[];groups[s.group].push(Object.assign({},s,{index:i}));});
+  Object.keys(groups).forEach(function(gn){
+    var gd=document.createElement('div');gd.className='toggle-group';
+    var lb=document.createElement('div');lb.className='toggle-group-label';lb.textContent=gn;gd.appendChild(lb);
+    var rw=document.createElement('div');rw.className='toggle-row';
+    groups[gn].forEach(function(s){
+      var b=document.createElement('button');b.className='toggle-btn'+(visibility[s.key]?' active':'');
+      var mn=s.dataMin%1===0?s.dataMin:s.dataMin.toFixed(2);var mx=s.dataMax%1===0?s.dataMax:s.dataMax.toFixed(2);
+      b.innerHTML='<span class="swatch" style="background:'+s.color+'"></span>'+s.label+' <span class="range">('+mn+'–'+mx+')</span>';
+      b.style.opacity=visibility[s.key]?'1':'0.4';
+      if(visibility[s.key]){b.style.borderColor=s.color;b.style.background=s.color+'10';}
+      b.addEventListener('click',function(){
+        visibility[s.key]=!visibility[s.key];
+        if(visibility[s.key]){b.classList.add('active');b.style.borderColor=s.color;b.style.background=s.color+'10';b.style.opacity='1';}
+        else{b.classList.remove('active');b.style.borderColor='#d1d5db';b.style.background='#f9fafb';b.style.opacity='0.4';}
+        chart.data.datasets[s.index].hidden=!visibility[s.key];
+        chart.options.scales['y_'+s.key].display=visibility[s.key];
+        chart.options.scales['y_'+s.key].title.display=visibility[s.key];
+        chart.update();updateRangeLegend();
+      });
+      rw.appendChild(b);
+    });
+    gd.appendChild(rw);c.appendChild(gd);
+  });
+}
+
+function updateRangeLegend(){
+  var c=document.getElementById('activeRanges');c.innerHTML='';var any=false;
+  seriesConfig.forEach(function(s){
+    if(!visibility[s.key])return;any=true;
+    var it=document.createElement('div');it.className='item';
+    var mn=s.dataMin%1===0?s.dataMin:s.dataMin.toFixed(2);var mx=s.dataMax%1===0?s.dataMax:s.dataMax.toFixed(2);
+    it.innerHTML='<span class="rdot" style="background:'+s.color+'"></span><strong style="color:'+s.color+'">'+s.label+'</strong><span class="vals">'+mn+s.unit+' → '+mx+s.unit+'</span>';
+    c.appendChild(it);
+  });
+  if(!any)c.innerHTML='<span style="color:#9ca3af;font-size:13px;">Toggle a parameter above to start exploring</span>';
+}
+
+// ── TRY LIVE FETCH (works when hosted, fails silently from file://) ──
+function tryLiveFetch() {
+  setStatus('offline', 'Fetching live data...');
+  fetch(SHEET_CSV_URL + '&_cb=' + Date.now())
+    .then(function(r) { return r.text(); })
+    .then(function(text) {
+      var rows = parseCSV(text);
+      if (rows.length > 0) {
+        parsedData = processRows(rows);
+        isLive = true;
+        var now = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        setStatus('live', 'Live from Google Sheets — ' + parsedData.length + ' readings · Updated ' + now);
+        renderChart();
+      } else {
+        throw new Error('No rows parsed');
+      }
+    })
+    .catch(function(err) {
+      console.log('Live fetch not available (normal when opening locally):', err.message);
+      if (!isLive) {
+        // Use embedded data
+        parsedData = processRows(EMBEDDED_DATA);
+        setStatus('offline', 'Showing embedded data (' + parsedData.length + ' readings) — host this file online for live updates');
+        renderChart();
+      }
+    });
+}
+
+// ── INIT ──────────────────────────────────────────────
+tryLiveFetch();
+setInterval(tryLiveFetch, REFRESH_INTERVAL_MS);
+</script>
+</body>
+</html>
