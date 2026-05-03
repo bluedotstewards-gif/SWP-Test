@@ -30,7 +30,7 @@
       display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px;
     }
     .dot.live { background: #22c55e; }
-    .dot.offline { background: #f59e0b; }
+    .dot.loading { background: #f59e0b; }
     .dot.error { background: #ef4444; }
     .status-bar button {
       font-size: 12px; font-family: inherit; background: #f9fafb;
@@ -54,6 +54,19 @@
     .toggle-btn .swatch { width: 16px; height: 4px; border-radius: 2px; flex-shrink: 0; }
     .toggle-btn .range { font-size: 10px; color: #9ca3af; margin-left: 2px; }
     .chart-wrap { position: relative; width: 100%; height: 750px; margin-top: 18px; }
+    .message-overlay {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.95); font-size: 15px; color: #6b7280; z-index: 10; gap: 12px;
+      text-align: center; padding: 40px;
+    }
+    .message-overlay .spinner {
+      width: 32px; height: 32px; border: 3px solid #e5e7eb;
+      border-top-color: #457b9d; border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    .message-overlay.error-state { color: #ef4444; }
+    .message-overlay .detail { font-size: 12px; color: #9ca3af; max-width: 500px; line-height: 1.5; }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .active-ranges {
       display: flex; gap: 18px; justify-content: center; flex-wrap: wrap;
       margin-top: 14px; padding: 10px 16px; background: #f9fafb; border-radius: 8px;
@@ -71,16 +84,21 @@
   <div class="note">
     Each parameter has its own <strong>color-coded number scale</strong>. Missing values are
     <strong>linearly interpolated</strong> (smaller, faded dots). Hover for actual values.
+    <strong>Data fetched live from Google Sheets · refreshes every 5 minutes.</strong>
   </div>
 
   <div class="status-bar">
-    <span id="statusText"><span class="dot offline"></span>Loading...</span>
-    <button onclick="tryLiveFetch()">↻ Refresh</button>
+    <span id="statusText"><span class="dot loading"></span>Fetching data from Google Sheets...</span>
+    <button onclick="fetchData()">↻ Refresh</button>
   </div>
 
   <div id="toggles"></div>
 
   <div class="chart-wrap">
+    <div class="message-overlay" id="overlay">
+      <div class="spinner"></div>
+      Fetching data from Google Sheets...
+    </div>
     <canvas id="chart"></canvas>
   </div>
 
@@ -89,61 +107,10 @@
 
 <script>
 // ╔═══════════════════════════════════════════════════════════╗
-// ║  EMBEDDED DATA (works offline / from file://)             ║
-// ║  This is auto-replaced by live data when hosted online.   ║
-// ╚═══════════════════════════════════════════════════════════╝
-var EMBEDDED_DATA = [
-  {date:"2024-12-24",pH:7.3,cond:1.01,tds:653,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:470,anRH:60,anTemp:5.9,hRH:61.9,hTemp:3,wTemp:2.6},
-  {date:"2024-12-30",pH:7.4,cond:0.88,tds:533,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:474,anRH:64,anTemp:11.5,hRH:68.8,hTemp:8.5,wTemp:8.1},
-  {date:"2025-01-06",pH:null,cond:null,tds:null,nitrate:null,nitrite:null,phosphate:null,turbidity:null,co2:428,anRH:62,anTemp:-4.6,hRH:51.1,hTemp:-4.5,wTemp:null},
-  {date:"2025-01-14",pH:7,cond:1.03,tds:860,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:455,anRH:66,anTemp:4.4,hRH:45.1,hTemp:-1,wTemp:3},
-  {date:"2025-01-21",pH:7,cond:2.19,tds:1491,nitrate:null,nitrite:null,phosphate:0,turbidity:null,co2:426,anRH:37,anTemp:-4.6,hRH:50.6,hTemp:-8.5,wTemp:0.73},
-  {date:"2025-01-27",pH:7.8,cond:2.33,tds:1844,nitrate:0,nitrite:0,phosphate:0.5,turbidity:null,co2:457,anRH:72,anTemp:1.6,hRH:64.6,hTemp:-0.9,wTemp:4.12},
-  {date:"2025-02-05",pH:7.5,cond:3.34,tds:1899,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:478,anRH:56,anTemp:3.8,hRH:62.1,hTemp:0.668,wTemp:0.34},
-  {date:"2025-02-11",pH:7.4,cond:4,tds:1999,nitrate:2,nitrite:0,phosphate:0.5,turbidity:null,co2:472,anRH:47,anTemp:4.5,hRH:58.9,hTemp:0,wTemp:3.3},
-  {date:"2025-02-25",pH:7,cond:1.93,tds:1269,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:468,anRH:64,anTemp:6.2,hRH:67.9,hTemp:4.9,wTemp:0.13},
-  {date:"2025-03-04",pH:7.3,cond:2.11,tds:1457,nitrate:null,nitrite:null,phosphate:0.25,turbidity:null,co2:490,anRH:46,anTemp:8.2,hRH:46.2,hTemp:7.15,wTemp:0.62},
-  {date:"2025-03-10",pH:7.1,cond:0.55,tds:325,nitrate:null,nitrite:null,phosphate:1,turbidity:null,co2:497,anRH:41,anTemp:19,hRH:36.7,hTemp:15.24,wTemp:7.62},
-  {date:"2025-03-19",pH:8.3,cond:1.74,tds:1138,nitrate:2,nitrite:0,phosphate:0,turbidity:null,co2:485,anRH:32,anTemp:26.3,hRH:26,hTemp:25.9,wTemp:null},
-  {date:"2025-03-25",pH:8.6,cond:1.86,tds:1236,nitrate:1,nitrite:0,phosphate:0,turbidity:null,co2:462,anRH:43,anTemp:9,hRH:47,hTemp:6.82,wTemp:null},
-  {date:"2025-04-01",pH:8.4,cond:1.3,tds:813,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:481,anRH:20,anTemp:15.9,hRH:18,hTemp:16.96,wTemp:8.6},
-  {date:"2025-04-09",pH:8.5,cond:0.86,tds:523,nitrate:1,nitrite:0,phosphate:0.25,turbidity:null,co2:476,anRH:27,anTemp:18.2,hRH:27.4,hTemp:16.29,wTemp:16.29},
-  {date:"2025-04-17",pH:8.8,cond:0.87,tds:530,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:466,anRH:23,anTemp:24.3,hRH:23,hTemp:18.6,wTemp:15.48},
-  {date:"2025-04-23",pH:8.6,cond:0.96,tds:589,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:478,anRH:39,anTemp:16.6,hRH:38,hTemp:16.03,wTemp:null},
-  {date:"2025-04-28",pH:8.5,cond:0.94,tds:577,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:479,anRH:39,anTemp:17.1,hRH:39.5,hTemp:16.2,wTemp:null},
-  {date:"2025-05-06",pH:8.8,cond:0.83,tds:505,nitrate:0,nitrite:0,phosphate:0.5,turbidity:null,co2:466,anRH:53,anTemp:20.2,hRH:53,hTemp:19.6,wTemp:17.93},
-  {date:"2025-05-12",pH:7.8,cond:0.89,tds:541,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:474,anRH:25,anTemp:36.7,hRH:24,hTemp:35.4,wTemp:null},
-  {date:"2025-05-21",pH:8,cond:0.79,tds:482,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:498,anRH:46,anTemp:17.2,hRH:42.2,hTemp:16.51,wTemp:19.39},
-  {date:"2025-05-29",pH:8,cond:0.55,tds:327,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:482,anRH:64,anTemp:21.1,hRH:null,hTemp:null,wTemp:19.86},
-  {date:"2025-06-05",pH:7.6,cond:0.76,tds:455,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:514,anRH:70,anTemp:22,hRH:null,hTemp:null,wTemp:25.36},
-  {date:"2025-06-12",pH:8.5,cond:0.56,tds:331,nitrate:0,nitrite:0,phosphate:0.25,turbidity:null,co2:490,anRH:48,anTemp:24.7,hRH:38.43,hTemp:24.68,wTemp:23.34},
-  {date:"2025-06-17",pH:8.4,cond:0.71,tds:427,nitrate:0,nitrite:0,phosphate:0,turbidity:null,co2:527,anRH:81,anTemp:20.3,hRH:86.9,hTemp:20.67,wTemp:21.13},
-  {date:"2025-06-27",pH:7.7,cond:0.68,tds:403,nitrate:0,nitrite:0,phosphate:0,turbidity:16.3,co2:899,anRH:75,anTemp:18.2,hRH:83.6,hTemp:23.21,wTemp:27.28},
-  {date:"2025-07-04",pH:7.5,cond:0.41,tds:267,nitrate:1,nitrite:0.15,phosphate:0.25,turbidity:15.8,co2:498,anRH:63,anTemp:22.4,hRH:51.4,hTemp:22.9,wTemp:24.79},
-  {date:"2025-07-09",pH:7.7,cond:6.6,tds:353,nitrate:0,nitrite:0,phosphate:0.25,turbidity:15.6,co2:539,anRH:83,anTemp:26.1,hRH:74,hTemp:26.55,wTemp:null},
-  {date:"2025-07-17",pH:7.8,cond:0.58,tds:345,nitrate:null,nitrite:null,phosphate:0,turbidity:18.1,co2:502,anRH:63,anTemp:23.4,hRH:58,hTemp:23.18,wTemp:27.02},
-  {date:"2025-07-24",pH:8.1,cond:0.71,tds:425,nitrate:null,nitrite:null,phosphate:0.25,turbidity:17.9,co2:934,anRH:76,anTemp:28.4,hRH:72.1,hTemp:29.69,wTemp:30.53},
-  {date:"2025-07-30",pH:7.4,cond:0.63,tds:372,nitrate:0,nitrite:0,phosphate:0.25,turbidity:0,co2:453,anRH:63,anTemp:27.5,hRH:50.5,hTemp:27.41,wTemp:27.37},
-  {date:"2025-08-05",pH:8.6,cond:0.61,tds:362,nitrate:0,nitrite:0,phosphate:0.25,turbidity:19,co2:459,anRH:62,anTemp:24.9,hRH:59.3,hTemp:24.1,wTemp:26.04},
-  {date:"2025-08-19",pH:7.8,cond:0.68,tds:408,nitrate:0,nitrite:0,phosphate:0,turbidity:18.6,co2:502,anRH:71,anTemp:27.5,hRH:62.6,hTemp:26.67,wTemp:null},
-  {date:"2025-09-10",pH:7.7,cond:0.5,tds:294,nitrate:1,nitrite:0,phosphate:0.25,turbidity:16.4,co2:457,anRH:61,anTemp:23.3,hRH:null,hTemp:null,wTemp:24.48},
-  {date:"2025-09-15",pH:8.9,cond:0.55,tds:318,nitrate:0,nitrite:0,phosphate:0.5,turbidity:16.1,co2:488,anRH:67,anTemp:19.6,hRH:null,hTemp:null,wTemp:25.57},
-  {date:"2025-10-01",pH:8,cond:0.46,tds:269,nitrate:1,nitrite:0,phosphate:0,turbidity:18.7,co2:478,anRH:70,anTemp:16.1,hRH:null,hTemp:null,wTemp:20.42},
-  {date:"2025-10-07",pH:7.5,cond:0.53,tds:311,nitrate:0,nitrite:0,phosphate:0.25,turbidity:17,co2:478,anRH:89,anTemp:18.9,hRH:null,hTemp:null,wTemp:20.2},
-  {date:"2025-10-28",pH:7.7,cond:0.56,tds:331,nitrate:0,nitrite:0,phosphate:0,turbidity:15.4,co2:476,anRH:63,anTemp:12.6,hRH:null,hTemp:null,wTemp:9.01},
-  {date:"2025-10-28",pH:7.7,cond:0.56,tds:330,nitrate:0,nitrite:0,phosphate:0,turbidity:14.1,co2:476,anRH:63,anTemp:12.6,hRH:null,hTemp:null,wTemp:9.01},
-  {date:"2025-11-19",pH:7.2,cond:0.91,tds:555,nitrate:null,nitrite:null,phosphate:0.25,turbidity:8.19,co2:500,anRH:88,anTemp:7.7,hRH:null,hTemp:null,wTemp:5.92},
-  {date:"2025-11-19",pH:7.3,cond:0.8,tds:481,nitrate:null,nitrite:null,phosphate:0.25,turbidity:1.51,co2:500,anRH:88,anTemp:7.7,hRH:null,hTemp:null,wTemp:5.92},
-  {date:"2025-11-29",pH:7.3,cond:1.01,tds:623,nitrate:null,nitrite:null,phosphate:0.5,turbidity:null,co2:480,anRH:65,anTemp:6.9,hRH:null,hTemp:null,wTemp:null},
-  {date:"2025-11-29",pH:7.6,cond:0.96,tds:586,nitrate:null,nitrite:null,phosphate:0.5,turbidity:null,co2:480,anRH:65,anTemp:6.9,hRH:null,hTemp:null,wTemp:null},
-  {date:"2025-12-09",pH:6.9,cond:1.16,tds:729,nitrate:2,nitrite:0,phosphate:0.25,turbidity:1.78,co2:469,anRH:84,anTemp:-0.9,hRH:null,hTemp:null,wTemp:4.2},
-  {date:"2025-12-09",pH:7.3,cond:1.17,tds:733,nitrate:1,nitrite:0,phosphate:0,turbidity:5.61,co2:469,anRH:84,anTemp:-0.9,hRH:null,hTemp:null,wTemp:4.2},
-  {date:"2026-01-02",pH:7.1,cond:1.29,tds:820,nitrate:2,nitrite:0,phosphate:0,turbidity:3.9,co2:443,anRH:64,anTemp:1.7,hRH:50,hTemp:-1.53,wTemp:1.5},
-  {date:"2026-01-02",pH:6.5,cond:1.37,tds:878,nitrate:2,nitrite:0,phosphate:0,turbidity:4.5,co2:443,anRH:64,anTemp:1.7,hRH:50,hTemp:-1.53,wTemp:1.5}
-];
-
-// ╔═══════════════════════════════════════════════════════════╗
-// ║  GOOGLE SHEET CONFIG (for live updates when hosted)       ║
+// ║  CONFIGURATION                                            ║
+// ║  This file fetches ALL data live from Google Sheets.       ║
+// ║  It must be hosted on a web server (e.g. Netlify).        ║
+// ║  It will NOT work from file:// due to browser security.   ║
 // ╚═══════════════════════════════════════════════════════════╝
 var SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTGtkQsc1kvNrbtRSkp6g511BNaT7SaCwqr5akM9N8NrM4E26WjmnRXoJZh4GeSLfcwmJzJ4oIpxs3z/pub?gid=709551290&single=true&output=csv';
 var REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -170,24 +137,21 @@ seriesConfig.forEach(function(s) { visibility[s.key] = (s.key === 'pH' || s.key 
 
 var chart = null;
 var parsedData = [];
-var isLive = false;
 
 // ── STATUS ────────────────────────────────────────────
 function setStatus(state, message) {
-  var el = document.getElementById('statusText');
-  el.innerHTML = '<span class="dot ' + state + '"></span>' + message;
+  document.getElementById('statusText').innerHTML = '<span class="dot ' + state + '"></span>' + message;
 }
 
-// ── PROCESS ROWS ──────────────────────────────────────
-function processRows(rows) {
-  rows.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
-  var dateCounts = {};
-  return rows.map(function(r) {
-    var dateKey = r.date;
-    dateCounts[dateKey] = (dateCounts[dateKey] || 0) + 1;
-    var offset = (dateCounts[dateKey] - 1) * 3600000;
-    return Object.assign({}, r, { timestamp: new Date(dateKey).getTime() + offset });
-  }).filter(function(r) { return !isNaN(r.timestamp); });
+function showOverlay(html, isError) {
+  var el = document.getElementById('overlay');
+  el.innerHTML = html;
+  el.style.display = 'flex';
+  el.className = 'message-overlay' + (isError ? ' error-state' : '');
+}
+
+function hideOverlay() {
+  document.getElementById('overlay').style.display = 'none';
 }
 
 // ── CSV PARSER ────────────────────────────────────────
@@ -207,14 +171,14 @@ function splitCSV(line) {
 function parseCSV(text) {
   var lines = text.split('\n');
   var headerIdx = -1, headers = [];
-  for (var h = 0; h < Math.min(5, lines.length); h++) {
+  for (var h = 0; h < Math.min(10, lines.length); h++) {
     var test = splitCSV(lines[h]);
     var lower = test.map(function(x){return x.trim().toLowerCase();});
     if (lower.indexOf('date') >= 0 || lower.indexOf('ph') >= 0) {
       headerIdx = h; headers = test.map(function(x){return x.trim();}); break;
     }
   }
-  if (headerIdx === -1) return [];
+  if (headerIdx === -1) return { rows: [], headers: [], error: 'Could not find header row with "Date" or "pH" column' };
 
   var colMap = {};
   headers.forEach(function(h, i) {
@@ -234,7 +198,19 @@ function parseCSV(text) {
     }
     if (obj.date && has) rows.push(obj);
   }
-  return rows;
+  return { rows: rows, headers: headers, colMap: colMap };
+}
+
+// ── PROCESS ROWS ──────────────────────────────────────
+function processRows(rows) {
+  rows.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
+  var dateCounts = {};
+  return rows.map(function(r) {
+    var dateKey = r.date;
+    dateCounts[dateKey] = (dateCounts[dateKey] || 0) + 1;
+    var offset = (dateCounts[dateKey] - 1) * 3600000;
+    return Object.assign({}, r, { timestamp: new Date(dateKey).getTime() + offset });
+  }).filter(function(r) { return !isNaN(r.timestamp); });
 }
 
 // ── NORMALIZE & INTERPOLATE ───────────────────────────
@@ -359,37 +335,59 @@ function updateRangeLegend(){
   if(!any)c.innerHTML='<span style="color:#9ca3af;font-size:13px;">Toggle a parameter above to start exploring</span>';
 }
 
-// ── TRY LIVE FETCH (works when hosted, fails silently from file://) ──
-function tryLiveFetch() {
-  setStatus('offline', 'Fetching live data...');
+// ── FETCH DATA FROM GOOGLE SHEETS ─────────────────────
+function fetchData() {
+  setStatus('loading', 'Fetching data from Google Sheets...');
+  showOverlay('<div class="spinner"></div>Fetching data from Google Sheets...', false);
+
   fetch(SHEET_CSV_URL + '&_cb=' + Date.now())
-    .then(function(r) { return r.text(); })
+    .then(function(response) {
+      if (!response.ok) throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+      return response.text();
+    })
     .then(function(text) {
-      var rows = parseCSV(text);
-      if (rows.length > 0) {
-        parsedData = processRows(rows);
-        isLive = true;
-        var now = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-        setStatus('live', 'Live from Google Sheets — ' + parsedData.length + ' readings · Updated ' + now);
-        renderChart();
-      } else {
-        throw new Error('No rows parsed');
+      console.log('CSV received, length:', text.length);
+      console.log('First 200 chars:', text.substring(0, 200));
+
+      var result = parseCSV(text);
+
+      if (result.error) {
+        throw new Error(result.error);
       }
+
+      console.log('Headers found:', result.headers);
+      console.log('Column mapping:', result.colMap);
+      console.log('Rows parsed:', result.rows.length);
+
+      if (result.rows.length === 0) {
+        throw new Error('CSV loaded but no data rows matched. Headers found: ' + result.headers.join(', '));
+      }
+
+      parsedData = processRows(result.rows);
+      hideOverlay();
+      var now = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      setStatus('live', 'Live from Google Sheets — ' + parsedData.length + ' readings · Updated ' + now);
+      renderChart();
     })
     .catch(function(err) {
-      console.log('Live fetch not available (normal when opening locally):', err.message);
-      if (!isLive) {
-        // Use embedded data
-        parsedData = processRows(EMBEDDED_DATA);
-        setStatus('offline', 'Showing embedded data (' + parsedData.length + ' readings) — host this file online for live updates');
-        renderChart();
-      }
+      console.error('Fetch failed:', err);
+      setStatus('error', 'Failed to fetch data');
+      showOverlay(
+        '<strong>Could not fetch data from Google Sheets</strong>' +
+        '<div class="detail">' +
+        '<p><strong>Error:</strong> ' + err.message + '</p><br>' +
+        '<p>This file must be hosted on a web server to fetch live data. ' +
+        'Opening from your computer (file://) will not work due to browser security restrictions.</p><br>' +
+        '<p><strong>Quick fix:</strong> Drag this file onto <a href="https://app.netlify.com/drop" target="_blank">app.netlify.com/drop</a> to host it for free.</p>' +
+        '</div>',
+        true
+      );
     });
 }
 
 // ── INIT ──────────────────────────────────────────────
-tryLiveFetch();
-setInterval(tryLiveFetch, REFRESH_INTERVAL_MS);
+fetchData();
+setInterval(fetchData, REFRESH_INTERVAL_MS);
 </script>
 </body>
 </html>
