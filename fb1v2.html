@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FB1 Water Quality Monitoring — Citizen Science</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #ffffff;
+      color: #1d3557;
+      padding: 32px 28px;
+      max-width: 100%;
+      margin: 0 auto;
+    }
+    h1 { font-size: 26px; margin-bottom: 4px; }
+    .subtitle { font-size: 14px; color: #6b7280; margin-bottom: 8px; }
+    .note {
+      font-size: 12px; color: #9ca3af; margin-bottom: 22px;
+      background: #f9fafb; padding: 8px 12px; border-radius: 6px; border-left: 3px solid #d1d5db;
+    }
+    .status-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 12px; color: #9ca3af; margin-bottom: 16px;
+    }
+    .status-bar .dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px;
+    }
+    .dot.live { background: #22c55e; }
+    .dot.loading { background: #f59e0b; }
+    .dot.error { background: #ef4444; }
+
+    .chart-mode-toggle {
+      display: flex; gap: 0; margin-bottom: 16px;
+    }
+    .chart-mode-toggle button {
+      font-size: 13px; font-family: inherit; padding: 7px 18px;
+      border: 1.5px solid #d1d5db; background: #f9fafb;
+      cursor: pointer; color: #6b7280; transition: all 0.2s;
+    }
+    .chart-mode-toggle button:first-child { border-radius: 8px 0 0 8px; }
+    .chart-mode-toggle button:last-child { border-radius: 0 8px 8px 0; border-left: none; }
+    .chart-mode-toggle button.active {
+      background: #1d3557; color: #fff; border-color: #1d3557; font-weight: 600;
+    }
+
+    .toggle-group { margin-bottom: 14px; }
+    .toggle-group-label {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.6px; color: #9ca3af; margin-bottom: 7px;
+    }
+    .toggle-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .toggle-btn {
+      display: flex; align-items: center; gap: 7px; padding: 6px 14px;
+      border-radius: 8px; border: 1.5px solid #d1d5db; background: #f9fafb;
+      cursor: pointer; font-size: 13px; font-family: inherit;
+      transition: all 0.2s; line-height: 1.3;
+    }
+    .toggle-btn.active { font-weight: 500; }
+    .toggle-btn .swatch { width: 16px; height: 4px; border-radius: 2px; flex-shrink: 0; }
+    .toggle-btn .range { font-size: 10px; color: #9ca3af; margin-left: 2px; }
+    .chart-wrap { position: relative; width: 100%; height: 75vh; min-height: 400px; max-height: 900px; margin-top: 18px; }
+    .active-ranges {
+      display: flex; gap: 18px; justify-content: center; flex-wrap: wrap;
+      margin-top: 14px; padding: 10px 16px; background: #f9fafb; border-radius: 8px;
+    }
+    .active-ranges .item { font-size: 12px; display: flex; align-items: center; gap: 5px; }
+    .active-ranges .rdot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+    .active-ranges .vals { color: #6b7280; }
+    .footer { font-size: 12px; color: #9ca3af; text-align: center; margin-top: 18px; }
+
+    /* ── Responsive adjustments ────────────── */
+    @media (max-width: 768px) {
+      body { padding: 16px 12px; }
+      h1 { font-size: 20px; }
+      .subtitle { font-size: 12px; }
+      .toggle-btn { font-size: 11px; padding: 5px 10px; }
+      .toggle-btn .range { display: none; }
+      .chart-mode-toggle button { font-size: 12px; padding: 6px 12px; }
+      .active-ranges { gap: 10px; padding: 8px 10px; }
+      .active-ranges .item { font-size: 11px; }
+    }
+    @media (max-width: 480px) {
+      .chart-wrap { height: 60vh; min-height: 300px; }
+      .toggle-btn { font-size: 10px; padding: 4px 8px; gap: 4px; }
+      .toggle-btn .swatch { width: 10px; }
+      .chart-mode-toggle button { font-size: 11px; padding: 5px 10px; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Holmes FB1 Water Chemistry Monitoring</h1>
+  <p class="subtitle">Toggle parameters to compare patterns — all series scaled to fill the chart height.</p>
+  <div class="note">
+    Each parameter has its own <strong>color-coded number scale</strong>. Hover for actual values.
+    Switch between <strong>Line</strong> (interpolated) and <strong>Scatter</strong> (measured points only) views.
+    <strong>Data fetched live from Google Sheets · refreshes every 5 minutes.</strong>
+  </div>
+
+  <div class="status-bar">
+    <span id="statusText"><span class="dot loading"></span>Fetching data from Google Sheets...</span>
+    <button onclick="fetchData()">↻ Refresh</button>
+  </div>
+
+  <!-- Chart mode toggle -->
+  <div class="chart-mode-toggle">
+    <button id="btnLine" class="active" onclick="setChartMode('line')">📈 Line (Interpolated)</button>
+    <button id="btnScatter" onclick="setChartMode('scatter')">⬤ Scatter (Measured Only)</button>
+  </div>
+
+  <div id="toggles"></div>
+
+  <div class="chart-wrap">
+    <canvas id="chart"></canvas>
+  </div>
+
+  <div class="active-ranges" id="activeRanges"></div>
+  <p class="footer">Built with Chart.js (MIT License) — Free & Open Source</p>
+
+<script>
+// ── GOOGLE SHEETS CONFIG ──────────────────────────────
+var SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTkP_RaVd1IIN615xIi_HcIvWRsinYUiEa5wmJmnTnQDFpmwIHfOiW7YNYayOz9ZDRmUKjwUm1CjTDZ/pub?gid=709551290&single=true&output=csv';
+var REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
+// ── SERIES CONFIG ─────────────────────────────────────
+var seriesConfig = [
+  { key:'pH', label:'pH', color:'#e63946', group:'Water Chemistry', unit:'' },
+  { key:'cond', label:'Conductivity (mS/cm)', color:'#457b9d', group:'Water Chemistry', unit:' mS/cm' },
+  { key:'tds', label:'TDS (ppm)', color:'#264653', group:'Water Chemistry', unit:' ppm' },
+  { key:'nitrate', label:'Nitrate', color:'#f4a261', group:'Nutrients', unit:'' },
+  { key:'nitrite', label:'Nitrite', color:'#e76f51', group:'Nutrients', unit:'' },
+  { key:'phosphate', label:'Phosphate', color:'#2a9d8f', group:'Nutrients', unit:'' },
+  { key:'turbidity', label:'Turbidity', color:'#7209b7', group:'Nutrients', unit:'' },
+  { key:'co2', label:'CO₂ (ppm)', color:'#8ac926', group:'Atmospheric', unit:' ppm' },
+  { key:'anRH', label:'AN Humidity (%)', color:'#adb5bd', group:'Atmospheric', unit:'%' },
+  { key:'anTemp', label:'Air Temp – AN (°C)', color:'#ff006e', group:'Temperature', unit:'°C' },
+  { key:'hRH', label:'HBLCD Humidity (%)', color:'#6c757d', group:'Atmospheric', unit:'%' },
+  { key:'hTemp', label:'HBLCD Temp (°C)', color:'#fb8500', group:'Temperature', unit:'°C' },
+  { key:'wTemp', label:'Water Temp (°C)', color:'#0077b6', group:'Temperature', unit:'°C' },
+];
+
+var visibility = {};
+seriesConfig.forEach(function(s) { visibility[s.key] = (s.key === 'pH' || s.key === 'wTemp'); });
+
+var chart = null;
+var parsedData = [];
+var chartMode = 'line'; // 'line' or 'scatter'
+
+// ── STATUS ────────────────────────────────────────────
+function setStatus(state, message) {
+  document.getElementById('statusText').innerHTML = '<span class="dot ' + state + '"></span>' + message;
+}
+
+// ── RESPONSIVE SIZING ─────────────────────────────────
+function getSize() {
+  var w = window.innerWidth;
+  if (w < 480) return { axisWidth: 40, axisFontSize: 8, titleFontSize: 7, tickFontSize: 10, pointR: 1.8, pointHover: 4, scatterR: 4, scatterHover: 6, lineWidth: 1.2, interpR: 0.8 };
+  if (w < 768) return { axisWidth: 48, axisFontSize: 9, titleFontSize: 8, tickFontSize: 11, pointR: 2, pointHover: 4.5, scatterR: 4.5, scatterHover: 7, lineWidth: 1.3, interpR: 0.8 };
+  return { axisWidth: 58, axisFontSize: 10, titleFontSize: 9, tickFontSize: 12, pointR: 2.5, pointHover: 5, scatterR: 5, scatterHover: 8, lineWidth: 1.5, interpR: 1 };
+}
+
+// ── PROCESS ROWS ──────────────────────────────────────
+function processRows(rows) {
+  rows.sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
+  var dateCounts = {};
+  return rows.map(function(r) {
+    var dateKey = r.date;
+    dateCounts[dateKey] = (dateCounts[dateKey] || 0) + 1;
+    var offset = (dateCounts[dateKey] - 1) * 3600000;
+    return Object.assign({}, r, { timestamp: new Date(dateKey).getTime() + offset });
+  }).filter(function(r) { return !isNaN(r.timestamp); });
+}
+
+// ── NORMALIZE & INTERPOLATE ───────────────────────────
+function computeMinMax() {
+  seriesConfig.forEach(function(s) {
+    var vals = parsedData.map(function(d){return d[s.key];}).filter(function(v){return v!==null&&v!==undefined;});
+    if (!vals.length) { s.dataMin=0;s.dataMax=1;s.normMin=0;s.normMax=1.05;return; }
+    s.dataMin=Math.min.apply(null,vals); s.dataMax=Math.max.apply(null,vals);
+    var range=s.dataMax-s.dataMin;
+    if (range === 0) {
+      // All values are the same — create a sensible range
+      if (s.dataMin === 0) {
+        // All zeros: show 0 at the bottom
+        s.normMin = 0; s.normMax = 1;
+      } else {
+        // All the same non-zero value: center with ±20% padding
+        var pad = Math.abs(s.dataMin) * 0.2 || 0.5;
+        s.normMin = s.dataMin - pad; s.normMax = s.dataMax + pad;
+      }
+    } else {
+      s.normMin = s.dataMin - range * 0.05; s.normMax = s.dataMax + range * 0.05;
+    }
+  });
+}
+function normalize(v,s){if(v===null||v===undefined)return null;var r=s.normMax-s.normMin;return r===0?50:((v-s.normMin)/r)*100;}
+
+function interpolate(key) {
+  var vals=parsedData.map(function(d){return{t:d.timestamp,v:d[key]};});
+  var res=vals.map(function(v){return{t:v.t,v:v.v};});
+  for(var i=0;i<res.length;i++){
+    if(res[i].v!==null&&res[i].v!==undefined)continue;
+    var pi=-1,ni=-1;
+    for(var p=i-1;p>=0;p--){if(vals[p].v!==null&&vals[p].v!==undefined){pi=p;break;}}
+    for(var n=i+1;n<vals.length;n++){if(vals[n].v!==null&&vals[n].v!==undefined){ni=n;break;}}
+    if(pi!==-1&&ni!==-1){var tr=vals[ni].t-vals[pi].t;var f=tr===0?0:(vals[i].t-vals[pi].t)/tr;res[i].v=vals[pi].v+f*(vals[ni].v-vals[pi].v);res[i].interpolated=true;}
+  }
+  return res;
+}
+
+// ── BUILD DATASETS ────────────────────────────────────
+function buildDatasets() {
+  var isScatter = chartMode === 'scatter';
+  var sz = getSize();
+
+  return seriesConfig.map(function(s) {
+    if (isScatter) {
+      var data = parsedData.map(function(d) {
+        var v = d[s.key];
+        if (v === null || v === undefined) return null;
+        return { x: d.timestamp, y: normalize(v, s), _raw: v, _interp: false };
+      }).filter(function(d) { return d !== null; });
+
+      return {
+        label: s.label, data: data,
+        borderColor: s.color, backgroundColor: s.color + '44', borderWidth: 0,
+        pointRadius: sz.scatterR, pointHoverRadius: sz.scatterHover,
+        pointBackgroundColor: s.color, pointBorderColor: '#fff', pointBorderWidth: 1.5,
+        showLine: false, yAxisID: 'y_' + s.key, hidden: !visibility[s.key],
+      };
+    } else {
+      var interp = interpolate(s.key);
+      return {
+        label: s.label,
+        data: interp.map(function(d) { return { x: d.t, y: normalize(d.v, s), _raw: d.v, _interp: !!d.interpolated }; }),
+        borderColor: s.color, backgroundColor: s.color + '22', borderWidth: sz.lineWidth,
+        pointRadius: interp.map(function(d) { return d.interpolated ? sz.interpR : sz.pointR; }),
+        pointHoverRadius: sz.pointHover,
+        pointBackgroundColor: interp.map(function(d) { return d.interpolated ? s.color + '66' : s.color; }),
+        pointBorderColor: interp.map(function(d) { return d.interpolated ? 'transparent' : '#fff'; }),
+        pointBorderWidth: interp.map(function(d) { return d.interpolated ? 0 : 1.5; }),
+        tension: 0.25, showLine: true, yAxisID: 'y_' + s.key, hidden: !visibility[s.key], spanGaps: false,
+      };
+    }
+  });
+}
+
+function buildScales() {
+  var sz = getSize();
+  var sc = {
+    x: { type:'time', time:{ unit:'month', tooltipFormat:'MMM d, yyyy', displayFormats:{ month:'MMM yyyy' } },
+      grid:{ color:'#f0f0f0' }, ticks:{ font:{ size:sz.tickFontSize }, maxRotation:45 } },
+    yGrid: { type:'linear', position:'left', min:0, max:100, display:false,
+      grid:{ drawOnChartArea:true, color:'#f3f4f6' }, ticks:{ display:false } },
+  };
+  seriesConfig.forEach(function(s, i) {
+    var side = i % 2 === 0 ? 'left' : 'right';
+    sc['y_' + s.key] = {
+      type:'linear', position:side, min:0, max:100, display:visibility[s.key], weight:i+1,
+      grid:{ drawOnChartArea:false }, afterFit:function(a){ a.width=sz.axisWidth; },
+      ticks:{ font:{ size:sz.axisFontSize }, color:s.color, count:6, padding:4, callback:function(val){
+        var r=s.normMax-s.normMin; var a=s.normMin+(val/100)*r;
+        if(Math.abs(a)>=100)return Math.round(a);if(Math.abs(a)>=1)return parseFloat(a.toFixed(1));return parseFloat(a.toFixed(3));
+      }},
+      title:{ display:visibility[s.key], text:s.label, font:{ size:sz.titleFontSize, weight:'600' }, color:s.color, padding:2 },
+    };
+  });
+  return sc;
+}
+
+function renderChart() {
+  computeMinMax();
+  if (chart) {
+    chart.data.datasets = buildDatasets();
+    chart.options.scales = buildScales();
+    chart.update();
+  } else {
+    chart = new Chart(document.getElementById('chart').getContext('2d'), {
+      type: 'line',
+      data: { datasets: buildDatasets() },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        layout:{ padding:{ left:10, right:10, top:10, bottom:10 } },
+        interaction:{ mode:'nearest', intersect:false, axis:'x' },
+        plugins:{
+          legend:{ display:false },
+          tooltip:{
+            backgroundColor:'#fff', titleColor:'#1d3557', bodyColor:'#374151',
+            borderColor:'#e5e7eb', borderWidth:1, cornerRadius:10, padding:14,
+            bodyFont:{ size:13 }, titleFont:{ size:13, weight:'600' },
+            displayColors:true, boxWidth:10, boxHeight:10, boxPadding:4,
+            callbacks:{
+              title:function(items){ if(!items.length)return''; var d=new Date(items[0].parsed.x); return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); },
+              label:function(ctx){ var s=seriesConfig[ctx.datasetIndex]; var rv=ctx.raw._raw; var ip=ctx.raw._interp;
+                if(rv===null||rv===undefined)return null;
+                var dsp=typeof rv==='number'?(Number.isInteger(rv)?rv:rv.toFixed(2)):rv;
+                return ' '+s.label+': '+dsp+s.unit+(ip?' (interpolated)':'');
+              }
+            }
+          },
+        },
+        scales: buildScales(),
+      },
+    });
+  }
+  buildToggles(); updateRangeLegend();
+}
+
+// ── CHART MODE TOGGLE ─────────────────────────────────
+function setChartMode(mode) {
+  chartMode = mode;
+  document.getElementById('btnLine').className = mode === 'line' ? 'active' : '';
+  document.getElementById('btnScatter').className = mode === 'scatter' ? 'active' : '';
+  renderChart();
+}
+
+// ── TOGGLE BUTTONS ────────────────────────────────────
+function buildToggles() {
+  var c = document.getElementById('toggles'); c.innerHTML = ''; var groups = {};
+  seriesConfig.forEach(function(s, i) { if (!groups[s.group]) groups[s.group] = []; groups[s.group].push(Object.assign({}, s, { index: i })); });
+  Object.keys(groups).forEach(function(gn) {
+    var gd = document.createElement('div'); gd.className = 'toggle-group';
+    var lb = document.createElement('div'); lb.className = 'toggle-group-label'; lb.textContent = gn; gd.appendChild(lb);
+    var rw = document.createElement('div'); rw.className = 'toggle-row';
+    groups[gn].forEach(function(s) {
+      var b = document.createElement('button'); b.className = 'toggle-btn' + (visibility[s.key] ? ' active' : '');
+      var mn = s.dataMin % 1 === 0 ? s.dataMin : s.dataMin.toFixed(2); var mx = s.dataMax % 1 === 0 ? s.dataMax : s.dataMax.toFixed(2);
+      b.innerHTML = '<span class="swatch" style="background:' + s.color + '"></span>' + s.label + ' <span class="range">(' + mn + '–' + mx + ')</span>';
+      b.style.opacity = visibility[s.key] ? '1' : '0.4';
+      if (visibility[s.key]) { b.style.borderColor = s.color; b.style.background = s.color + '10'; }
+      b.addEventListener('click', function() {
+        visibility[s.key] = !visibility[s.key];
+        if (visibility[s.key]) { b.classList.add('active'); b.style.borderColor = s.color; b.style.background = s.color + '10'; b.style.opacity = '1'; }
+        else { b.classList.remove('active'); b.style.borderColor = '#d1d5db'; b.style.background = '#f9fafb'; b.style.opacity = '0.4'; }
+        chart.data.datasets[s.index].hidden = !visibility[s.key];
+        chart.options.scales['y_' + s.key].display = visibility[s.key];
+        chart.options.scales['y_' + s.key].title.display = visibility[s.key];
+        chart.update(); updateRangeLegend();
+      });
+      rw.appendChild(b);
+    });
+    gd.appendChild(rw); c.appendChild(gd);
+  });
+}
+
+function updateRangeLegend() {
+  var c = document.getElementById('activeRanges'); c.innerHTML = ''; var any = false;
+  seriesConfig.forEach(function(s) {
+    if (!visibility[s.key]) return; any = true;
+    var it = document.createElement('div'); it.className = 'item';
+    var mn = s.dataMin % 1 === 0 ? s.dataMin : s.dataMin.toFixed(2); var mx = s.dataMax % 1 === 0 ? s.dataMax : s.dataMax.toFixed(2);
+    it.innerHTML = '<span class="rdot" style="background:' + s.color + '"></span><strong style="color:' + s.color + '">' + s.label + '</strong><span class="vals">' + mn + s.unit + ' → ' + mx + s.unit + '</span>';
+    c.appendChild(it);
+  });
+  if (!any) c.innerHTML = '<span style="color:#9ca3af;font-size:13px;">Toggle a parameter above to start exploring</span>';
+}
+
+// ── CSV PARSER ────────────────────────────────────────
+var HEADER_MAP = {
+  'date':'date','ph':'pH','conductivity mspcm':'cond','tds ppm':'tds',
+  'nitrate':'nitrate','nitrite':'nitrite','phosphate':'phosphate',
+  'turbidity':'turbidity','an co2':'co2','an rh':'anRH','an temp':'anTemp',
+  'hblcd rh':'hRH','hblcd temp':'hTemp','hbp wtemp':'wTemp',
+};
+
+function splitCSV(line) {
+  var r=[],c='',q=false;
+  for(var i=0;i<line.length;i++){var ch=line[i];if(ch==='"')q=!q;else if(ch===','&&!q){r.push(c);c='';}else c+=ch;}
+  r.push(c);return r;
+}
+
+function parseCSV(text) {
+  var lines = text.split('\n');
+  var headerIdx = -1, headers = [];
+  for (var h = 0; h < Math.min(10, lines.length); h++) {
+    var test = splitCSV(lines[h]);
+    var lower = test.map(function(x){return x.trim().toLowerCase();});
+    if (lower.indexOf('date') >= 0 || lower.indexOf('ph') >= 0) {
+      headerIdx = h; headers = test.map(function(x){return x.trim();}); break;
+    }
+  }
+  if (headerIdx === -1) return { rows: [], error: 'Could not find header row' };
+
+  var colMap = {};
+  headers.forEach(function(h, i) {
+    var lc = h.toLowerCase().replace(/\s+/g,' ').trim();
+    if (HEADER_MAP[lc]) { colMap[i] = HEADER_MAP[lc]; return; }
+    for (var k in HEADER_MAP) { if (lc.indexOf(k)>=0||k.indexOf(lc)>=0) { colMap[i]=HEADER_MAP[k]; return; } }
+  });
+
+  var rows = [];
+  for (var r = headerIdx+1; r < lines.length; r++) {
+    var line = lines[r].trim(); if (!line) continue;
+    var cells = splitCSV(line); var obj = {}; var has = false;
+    for (var ci in colMap) {
+      var idx=parseInt(ci), key=colMap[ci], val=(idx<cells.length)?cells[idx].trim():'';
+      if (key==='date') { if(val) obj.date=val; }
+      else { var n=parseFloat(val); obj[key]=isNaN(n)?null:n; if(!isNaN(n))has=true; }
+    }
+    if (obj.date && has) rows.push(obj);
+  }
+  return { rows: rows };
+}
+
+// ── RESIZE HANDLER ────────────────────────────────────
+var resizeTimeout;
+window.addEventListener('resize', function() {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(function() {
+    if (chart && parsedData.length) renderChart();
+  }, 250);
+});
+
+// ── FETCH DATA FROM GOOGLE SHEETS ─────────────────────
+function fetchData() {
+  setStatus('loading', 'Fetching data from Google Sheets...');
+
+  fetch(SHEET_CSV_URL + '&_cb=' + Date.now())
+    .then(function(response) {
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return response.text();
+    })
+    .then(function(text) {
+      var result = parseCSV(text);
+      if (result.error) throw new Error(result.error);
+      if (result.rows.length === 0) throw new Error('No data rows found');
+
+      parsedData = processRows(result.rows);
+      var now = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      setStatus('live', 'Live from Google Sheets — ' + parsedData.length + ' readings · Updated ' + now);
+      renderChart();
+    })
+    .catch(function(err) {
+      console.error('Fetch failed:', err);
+      setStatus('error', 'Failed to fetch: ' + err.message);
+    });
+}
+
+// ── INIT ──────────────────────────────────────────────
+fetchData();
+setInterval(fetchData, REFRESH_INTERVAL_MS);
+</script>
+</body>
+</html>
